@@ -12,7 +12,7 @@ def lambda_handler(event, context):
     s3_client = boto3.client("s3")
     list_objects_response = s3_client.list_objects(Bucket=BUCKET_NAME, Prefix=FOLDER_NAME)
 
-    # Scan for outdated resource pool tickets
+    # Scan for outdated resource pool entries
     deletion_list = []
     for file in list_objects_response["Contents"]:
         if file["Key"].endswith(".json"):
@@ -21,7 +21,7 @@ def lambda_handler(event, context):
             if total_seconds_passed >= CLEANUP_THRESHOLD_IN_SECONDS:
                     deletion_list.append({"Key": file["Key"]})
 
-    # Delete outdated resource pool tickets
+    # Delete outdated resource pool entries
     if len(deletion_list) != 0:
         deletion_response = s3_client.delete_objects(Bucket=BUCKET_NAME, Delete={"Objects": deletion_list, "Quiet":False})
         print(deletion_response)
