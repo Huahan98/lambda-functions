@@ -5,6 +5,7 @@ import constants
 import sys
 from functools import cmp_to_key
 
+
 def update_resource_pool(ticket_name, instance_type, num_of_instances=1):
     """
     Update the S3 resource pool for usage of SageMaker resources; status = preparing.
@@ -25,8 +26,8 @@ def update_resource_pool(ticket_name, instance_type, num_of_instances=1):
 
     # create json file content and upload to S3
     filename = f"{ticket_name.split('/')[1].split('.')[0]}-preparing.json"
-    s3_client.put_object(Bucket="dlc-test-tickets", Key=f"resource_pool/{instance_type}/{filename}")
-    S3_ticket_object = s3_resource.Object("dlc-test-tickets", f"resource_pool/{instance_type}/{filename}")
+    s3_client.put_object(Bucket=constants.BUCKET_NAME, Key=f"resource_pool/{instance_type}/{filename}")
+    S3_ticket_object = s3_resource.Object(constants.BUCKET_NAME, f"resource_pool/{instance_type}/{filename}")
     S3_ticket_object.put(Body=bytes(json.dumps(pool_ticket_content).encode('UTF-8')))
 
 
@@ -65,7 +66,7 @@ def query_resources(instance_type):
     :return: number of relevant instances currently in use
     """
     s3_client = boto3.client('s3')
-    objects = s3_client.list_objects(Bucket="dlc-test-tickets", Prefix=f"resource_pool/{instance_type}/")
+    objects = s3_client.list_objects(Bucket=constants.BUCKET_NAME, Prefix=f"resource_pool/{instance_type}/")
 
     entries_list = []
     for entry in objects["Contents"]:
@@ -77,6 +78,17 @@ def query_resources(instance_type):
 
 
 def trigger_build(image_uri, context, return_sqs_url, ticket_key, instance_type, num_of_instances):
+    """
+    Trigger the Job Executor CodeBuild project with aprropriate enviroment variables
+
+    :param image_uri: ECR URI
+    :param context: Build Context
+    :param return_sqs_url: SQS return queue url
+    :param ticket_key: Key of the request ticket
+    :param instance_type: Instance type requested by the test job
+    :param num_of_instances: Number of instances required by the test job
+    :return: response from start_build API call
+    """
     cb_client = boto3.client("codebuild")
     build = {'projectName': "DLCTestJobExecutor", 'environmentVariablesOverride': [
         {
@@ -121,23 +133,59 @@ def trigger_build(image_uri, context, return_sqs_url, ticket_key, instance_type,
     return build_response
 
 
-def delete_ticket():
-    pass
+def delete_ticket(bucket, key):
+    s3_client = boto3.client("s3")
+    s3_client.delete_object(Bucket=bucket, Key=key)
 
 
-def update_ticket():
-    pass
+def update_ticket(ticket_key, ticket_body):
+    """
+    Update the request ticket: if constants.MAX_SCHDULING_TRIES has been reached, move to dead letter queue.
+    Otherwise add one to SCHEDULING_TRIES in the ticket.
+
+    :param ticket_content: <json> the request ticket content
+    """
+    s3_client = boto3.client("s3")
+    s3_resource = boto3.resource("s3")
+    s3_client.delete_object(Bucket=constants.BUCKET_NAME, Key=ticket_key)
+
+    num_of_tries = ticket_body["SCHEDULING_TRIES"]
+
+    if num_of_tries >= constants.MAX_SCHEDULING_TRIES:
+        dead_letter_filename = f"{ticket_key.split('/')[1].split('.')[0]}-scheduleFailed.json"
+        s3_client.put_object(Bucket=constants.BUCKET_NAME, Key=f"dead_letter_queue/{dead_letter_filename}")
+        S3_ticket_object = s3_resource.Object(constants.BUCKET_NAME, f"dead_letter_queue/{dead_letter_filename}")
+        S3_ticket_object.put(Body=bytes(json.dumps(ticket_body).encode('UTF-8')))
+
+    else:
+        ticket_body["SCHEDULING_TRIES"] = num_of_tries + 1
+        filename = ticket_key.split('/')[1]
+        s3_client.put_object(Bucket=constants.BUCKET_NAME, Key=f"request_tickets/{filename}")
+        S3_ticket_object = s3_resource.Object(constants.BUCKET_NAME, f"request_tickets/{filename}")
+        S3_ticket_object.put(Body=bytes(json.dumps(ticket_body).encode('UTF-8')))
 
 
 def check_timeout(start_time):
-    if (datetime.now()-start_time).total_seconds() >= constants.TIMEOUT_LIMIT_SECONDS:
+    """
+    Check if time since the start_time has exceeded TIMEOUT_LIMIT_SECONDS, if so exits the program
+    This is to ensure this program executes and exits properly with Lambda's 15 mins timeout limit
+
+    :param start_time: <datetime>
+    """
+    if (datetime.now() - start_time).total_seconds() >= constants.TIMEOUT_LIMIT_SECONDS:
         sys.exit()
 
 
 def ticket_timestamp_cmp_function(ticket1, ticket2):
+    """
+    Compares the timestamp of the two request tickets
+
+    :param ticket1, ticket2: <dict> S3 object descriptors from s3_client.list_objects
+    :return: <bool>
+    """
     ticket1_key, ticket2_key = ticket1["Key"], ticket2["Key"]
     ticket1_timestamp, ticket2_timestamp = datetime.strptime(ticket1_key.split('/')[1].split('.')[0].split("_")[1],
-                                                             "%Y-%m-%d-%H-%M-%S") , \
+                                                             "%Y-%m-%d-%H-%M-%S"), \
                                            datetime.strptime(ticket2_key.split('/')[1].split('.')[0].split("_")[1],
                                                              "%Y-%m-%d-%H-%M-%S")
     return ticket1_timestamp > ticket2_timestamp
@@ -145,13 +193,12 @@ def ticket_timestamp_cmp_function(ticket1, ticket2):
 
 def lambda_handler(event, context):
     start_time = datetime.now()
-    bucket_name = "dlc-test-tickets"
+    bucket_name = constants.BUCKET_NAME
 
     s3_client = boto3.client("s3")
     response = s3_client.list_objects(Bucket=bucket_name, Prefix="request_tickets/")
     tickets_list = [ticket for ticket in response["Contents"] if ticket["Key"].endswith(".json")]
     tickets_list.sort(key=cmp_to_key(ticket_timestamp_cmp_function))
-
 
     for ticket in tickets_list:
         check_timeout(start_time)
@@ -167,19 +214,21 @@ def lambda_handler(event, context):
 
         instances_in_use = query_resources(instance_type)
         instances_limit = check_sagemaker_instance_limit(image_uri)
-        assert(instances_limit >= instances_in_use)
+        assert (instances_limit >= instances_in_use)
 
-        # if scheduling success: remove ticket upon successful trigger of CB Executor.
-        # if Scheduling failed: add one to the number of tries ["SCHEDULING_TRIES"]
-
-        # enough SageMaker resources, trigger CB Executor and remove ticket
+        # enough SageMaker resources for requested job
         if (instances_in_use + instances_required) < instances_limit:
-            trigger_build(image_uri, build_context, return_sqs_url, ticket_key, instance_type, instances_required)
-            delete_ticket()
+            try:
+                trigger_build(image_uri, build_context, return_sqs_url, ticket_key, instance_type, instances_required)
+            except:
+                update_ticket(ticket_key, ticket_body)
+                continue
+            delete_ticket(bucket_name, ticket_key)
 
-        # insufficient SageMaker resources, update ticket
+        # insufficient SageMaker resources
         else:
-            update_ticket()
+            update_ticket(ticket_key, ticket_body)
+
 
 if __name__ == "__main__":
     lambda_handler("", "")

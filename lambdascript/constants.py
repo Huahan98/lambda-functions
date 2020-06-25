@@ -1,5 +1,7 @@
 # Timeout limit for this lambda program
 TIMEOUT_LIMIT_SECONDS = 780 # 13 mins
+BUCKET_NAME = "dlc-test-tickets"
+MAX_SCHEDULING_TRIES = 5
 
 # SageMaker inference (hosting) instance limits
 P3_8XLARGE_INFERENCE = 20
