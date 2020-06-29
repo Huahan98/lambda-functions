@@ -1,4 +1,2 @@
-These are the commands that deploy the code in this directory to AWS Lambda.
-
 zip lambda.zip lambda_function.py constants.py
 aws lambda update-function-code --function-name DLCTestScheduler --zip-file fileb://lambda.zip

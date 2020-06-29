@@ -3,7 +3,7 @@ from dateutil.tz import tzlocal
 
 import boto3
 
-CLEANUP_THRESHOLD_IN_SECONDS = 86400 # 24 hours
+CLEANUP_THRESHOLD_IN_SECONDS = 86400  # 24 hours
 BUCKET_NAME = "dlc-test-tickets"
 FOLDER_NAME = "resource_pool/"
 
