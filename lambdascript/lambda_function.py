@@ -178,7 +178,7 @@ def update_ticket(ticket_key, ticket_body):
         LOGGER.warning(f"Ticket {dead_letter_filename} is moved to the dead letter queue.")
 
     # move to dead letter queue, timeout limit reached
-    elif (datetime.strptime(request_time, "%Y-%m-%d-%H-%M-%S") - datetime.now()).total_seconds() > timeout_limit:
+    elif (datetime.now() - datetime.strptime(request_time, "%Y-%m-%d-%H-%M-%S")).total_seconds() > timeout_limit:
         s3_client.delete_object(Bucket=constants.BUCKET_NAME, Key=ticket_key)
         dead_letter_filename = f"{ticket_key.split('/')[-1].split('.')[0]}-timeout.json"
         s3_client.put_object(Bucket=constants.BUCKET_NAME, Key=f"dead_letter_queue/{dead_letter_filename}")

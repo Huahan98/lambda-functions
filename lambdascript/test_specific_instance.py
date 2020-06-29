@@ -24,6 +24,7 @@ instances, on the account dl-containers-dev@amazon.com, account number 754106851
 tensorflow gpu image is used.
 """
 
+# Test parameters
 INSTANCE_TYPE = "ml.p3.8xlarge-training"
 INSTANCES_LIMIT = 4
 IMAGE_URI = "754106851545.dkr.ecr.us-west-2.amazonaws.com/pr-tensorflow-training:2.2.0-gpu-py37-cu101-ubuntu18.04-example-pr-269-2020-06-11-22-13-27"
@@ -45,9 +46,6 @@ def create_ticket_content(request_time):
     """
     Create content of the ticket to be sent to S3
 
-    :param image: <string> ECR URI
-    :param context: <string> build context (PR/MAINLINE/NIGHTLY/DEV)
-    :param num_of_instances: <int> number of instances required by the test job
     :param request_time: <string> datetime timestamp of when request was made
     :return: <dict> content of the request ticket
     """
